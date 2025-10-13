@@ -1,1121 +1,379 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Application Streamlit - Analyse des Opportunités de Maillage Interne
+===================================================================
+
+Interface graphique pour analyser les opportunités de maillage interne
+basées sur les données de la Google Search Console.
+
+Auteur: Assistant Claude
+Version: 18.3 - The Simple & Robust Final Version
+Date: 2025-07-14
+
+## AMÉLIORATION: Changelog v18.3
+- **LOGIQUE SIMPLIFIÉE:** Retour à une seule analyse pilotée par la checkbox "Analyse Floue".
+  - Si décochée : analyse exacte rapide.
+  - Si cochée : analyse exacte + floue combinées.
+- **FEEDBACK FIABLE:** Une seule barre de progression pour un suivi clair et constant.
+- **STABILITÉ FINALE:** Cette version est la plus stable et directe, combinant toutes les
+  fonctionnalités (Source de l'Ancre, Fuzzy, etc.) et les optimisations de performance.
+"""
+
 import streamlit as st
-import requests
 import pandas as pd
-import time
-import random
-from bs4 import BeautifulSoup
-import re
-from docx import Document
-from docx.shared import Inches
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+import zipfile
 import io
-import json
-from typing import List, Dict, Tuple, Optional
-import logging
-from dataclasses import dataclass
-# Imports IA - syntaxe compatible avec les dernières versions
+import re
+import urllib.parse
+from collections import Counter
+from bs4 import BeautifulSoup, NavigableString
+from typing import Dict, List, Tuple, Optional, Any
+from functools import lru_cache
+
+# Gestion des dépendances optionnelles
 try:
-    from openai import OpenAI  # Pour OpenAI v1.0+
+    import ahocorasick
+    AHO_CORASICK_AVAILABLE = True
 except ImportError:
-    import openai  # Fallback pour versions antérieures
-import anthropic
-import google.generativeai as genai
-import trafilatura
-from urllib.parse import urlparse
-import base64
+    AHO_CORASICK_AVAILABLE = False
+try:
+    import openpyxl
+    XLSX_EXPORT_AVAILABLE = True
+except ImportError:
+    XLSX_EXPORT_AVAILABLE = False
+try:
+    from fuzzywuzzy import fuzz
+    FUZZY_AVAILABLE = True
+except ImportError:
+    FUZZY_AVAILABLE = False
 
-# Configuration du logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+st.set_page_config(
+    page_title="🔗 Maillage Interne SEO", page_icon="🔗",
+    layout="wide", initial_sidebar_state="expanded"
+)
 
-@dataclass
-class CompetitorData:
-    """Structure pour stocker les données d'un concurrent"""
-    url: str
-    title: str
-    meta_description: str
-    headings: Dict[str, List[str]]
-    position: int
-    raw_html: str
-    extraction_success: bool
-    error_message: str = ""
-    relevance_score: float = 0.0
-    selected: bool = False
-
-@dataclass
-class SEOBrief:
-    """Structure pour le brief SEO final"""
-    target_keyword: str
-    optimized_title: str
-    optimized_meta_description: str
-    headings_structure: str
-    country: str
-    language: str
-    competitors_analyzed: List[str]
-
-class DataForSEOConfig:
-    """Configuration pour les pays et langues supportés par DataForSEO"""
-    
-    SUPPORTED_MARKETS = {
-        "🇫🇷 France": {
-            "location_code": 2250,
-            "country_code": "FR",
-            "languages": {"Français": "fr"},
-            "google_domain": "google.fr"
-        },
-        "🇺🇸 États-Unis": {
-            "location_code": 2840,
-            "country_code": "US",
-            "languages": {"English": "en"},
-            "google_domain": "google.com"
-        },
-        "🇬🇧 Royaume-Uni": {
-            "location_code": 2826,
-            "country_code": "GB",
-            "languages": {"English": "en"},
-            "google_domain": "google.co.uk"
-        },
-        "🇩🇪 Allemagne": {
-            "location_code": 2276,
-            "country_code": "DE", 
-            "languages": {"Deutsch": "de", "English": "en"},
-            "google_domain": "google.de"
-        },
-        "🇪🇸 Espagne": {
-            "location_code": 2724,
-            "country_code": "ES",
-            "languages": {"Español": "es", "English": "en"},
-            "google_domain": "google.es"
-        },
-        "🇮🇹 Italie": {
-            "location_code": 2380,
-            "country_code": "IT",
-            "languages": {"Italiano": "it", "English": "en"},
-            "google_domain": "google.it"
-        },
-        "🇧🇪 Belgique": {
-            "location_code": 2056,
-            "country_code": "BE",
-            "languages": {"Français": "fr", "Nederlands": "nl"},
-            "google_domain": "google.be"
-        },
-        "🇨🇦 Canada": {
-            "location_code": 2124,
-            "country_code": "CA",
-            "languages": {"English": "en", "Français": "fr"},
-            "google_domain": "google.ca"
-        }
+# --- CLASSE ANALYSEUR (Stable et complète) ---
+class InternalLinkingAnalyzer:
+    FRENCH_STOPWORDS = {
+        'a', 'à', 'au', 'aux', 'avec', 'ce', 'ces', 'dans', 'de', 'des', 'du', 'elle', 'en', 'et', 'être', 'eu', 'il', 'je', 'la', 'le', 'les', 'leur', 'lui', 'ma', 'mais', 'me', 'même', 'mes', 'moi', 'mon', 'ne', 'nos', 'notre', 'nous', 'on', 'ont', 'ou', 'par', 'pas', 'pour', 'qu', 'que', 'qui', 'sa', 'se', 'ses', 'son', 'sur', 'ta', 'te', 'tes', 'toi', 'ton', 'tu', 'un', 'une', 'vos', 'votre', 'vous', 'c', 'd', 'j', 'l', 'à', 'm', 'n', 's', 't', 'y', 'été', 'étée', 'étées', 'étés', 'étant', 'suis', 'es', 'est', 'sommes', 'êtes', 'sont', 'serai', 'seras', 'sera', 'serons', 'serez', 'seront', 'serais', 'serait', 'serions', 'seriez', 'seraient', 'étais', 'était', 'étions', 'étiez', 'étaient', 'fus', 'fut', 'fûmes', 'fûtes', 'furent', 'sois', 'soit', 'soyons', 'soyez', 'soient', 'fusse', 'fusses', 'fût', 'fussions', 'fussiez', 'fussent', 'ayant', 'ayante', 'ayantes', 'ayants', 'eu', 'eue', 'eues', 'eus', 'ai', 'as', 'avons', 'avez', 'ont', 'aurai', 'auras', 'aura', 'aurons', 'aurez', 'auront', 'aurais', 'aurait', 'aurions', 'auriez', 'auraient', 'avais', 'avait', 'avions', 'aviez', 'avaient', 'eut', 'eûmes', 'eûtes', 'eurent', 'aie', 'aies', 'ait', 'ayons', 'ayez', 'aient', 'eusse', 'eusses', 'eût', 'eussions', 'eussiez', 'eussent', 'ceci', 'cela', 'celà', 'cet', 'cette', 'ici', 'ils', 'les', 'leurs', 'quel', 'quels', 'quelle', 'quelles', 'sans', 'soi'
     }
-    
-    @classmethod
-    def get_market_config(cls, country_name: str, language_name: str) -> Dict:
-        """Récupère la configuration pour un pays et une langue donnés"""
-        if country_name not in cls.SUPPORTED_MARKETS:
-            raise ValueError(f"Pays non supporté: {country_name}")
+    CLASSIC_PAGE_PATTERNS = [
+        r'mentions[-_]?legales?', r'cgu', r'cgv', 'conditions', 'legal', 'a[-_]?propos', 'about', 'contact',
+        r'nous[-_]?contacter', r'politique[-_]?confidentialite', 'privacy', 'cookie', r'plan[-_]?site',
+        'sitemap', 'aide', 'help', 'faq', 'support', '404', 'erreur', r'recherche', 'search', 'connexion',
+        'login', 'inscription', 'register', 'panier', 'cart', 'commande', 'checkout', r'mon[-_]?compte', 'account'
+    ]
+    def __init__(self, config: Dict):
+        self.config = config
+        self.excel_data = None
         
-        market = cls.SUPPORTED_MARKETS[country_name]
-        
-        if language_name not in market["languages"]:
-            raise ValueError(f"Langue non supportée pour {country_name}: {language_name}")
-        
-        return {
-            "location_code": market["location_code"],
-            "language_code": market["languages"][language_name],
-            "country_code": market["country_code"],
-            "google_domain": market["google_domain"]
-        }
-    
-    @classmethod
-    def get_available_languages(cls, country_name: str) -> List[str]:
-        """Récupère les langues disponibles pour un pays"""
-        if country_name not in cls.SUPPORTED_MARKETS:
-            return []
-        return list(cls.SUPPORTED_MARKETS[country_name]["languages"].keys())
-
-class DataForSEOAPI:
-    """Classe pour interfacer avec DataForSEO SERP API"""
-    
-    def __init__(self, username: str, password: str):
-        self.username = username
-        self.password = password
-        self.base_url = "https://api.dataforseo.com/v3"
-        self.session = requests.Session()
-        
-        # Configuration de l'authentification
-        credentials = f"{username}:{password}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        self.session.headers.update({
-            "Authorization": f"Basic {encoded_credentials}",
-            "Content-Type": "application/json"
-        })
-    
-    def search_serp_live(self, keyword: str, location_code: int, language_code: str, 
-                        num_results: int = 10) -> List[Dict]:
-        """Effectue une recherche SERP en temps réel via DataForSEO"""
-        endpoint = f"{self.base_url}/serp/google/organic/live/advanced"
-        
-        payload = [{
-            "keyword": keyword,
-            "location_code": location_code,
-            "language_code": language_code,
-            "device": "desktop",
-            "os": "windows",
-            "depth": min(num_results, 100),
-            "calculate_rectangles": False
-        }]
-        
+    def load_excel_data(self, uploaded_file) -> bool:
         try:
-            response = self.session.post(endpoint, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get("status_code") != 20000:
-                logger.error(f"DataForSEO API Error: {data.get('status_message')}")
-                return []
-            
-            # Extraction des résultats organiques
-            results = []
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                serp_items = data["tasks"][0]["result"][0].get("items", [])
-                
-                for i, item in enumerate(serp_items, 1):
-                    if item.get("type") == "organic" and item.get("url"):
-                        results.append({
-                            "position": i,
-                            "title": item.get("title", ""),
-                            "url": item.get("url", ""),
-                            "snippet": item.get("description", ""),
-                            "meta_description": item.get("description", "")
-                        })
-                    
-                    if len(results) >= num_results:
-                        break
-            
-            return results
-            
+            df = pd.read_csv(uploaded_file, on_bad_lines='skip') if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            df.columns = df.columns.str.lower().str.strip()
+            rename_map = {'pages': 'page', 'requête': 'query', 'clics': 'clicks', 'position moyenne': 'position'}
+            df = df.rename(columns=rename_map)
+            required_cols = ['page', 'query', 'clicks']
+            if not all(col in df.columns for col in required_cols):
+                st.error(f"Colonnes manquantes ! Requis: {', '.join(required_cols)}. Trouvé: {list(df.columns)}"); return False
+            df = df.dropna(subset=required_cols).copy()
+            df['clicks'] = pd.to_numeric(df['clicks'], errors='coerce')
+            if 'position' in df.columns: df['position'] = pd.to_numeric(df['position'], errors='coerce')
+            df.dropna(subset=['clicks'], inplace=True)
+            if 'query' in df.columns: df.dropna(subset=['query'], inplace=True)
+            if self.config['min_clicks'] > 0: df = df[df['clicks'] >= self.config['min_clicks']]
+            if 'position' in df.columns and self.config['max_position'] > 0: df = df[df['position'] <= self.config['max_position']]
+            if 'query' in df.columns: df = df[df['query'].str.len() >= self.config['min_keyword_length']]
+            if self.config['exclude_stopwords']: df = df[~df['query'].str.lower().isin(self.FRENCH_STOPWORDS)]
+            df['priority'] = df['clicks'] * (1 / df['position'].clip(lower=0.1)) if 'position' in df.columns else df['clicks']
+            self.excel_data = df
+            return True
         except Exception as e:
-            logger.error(f"Erreur DataForSEO API: {e}")
-            return []
+            st.error(f"Erreur lors du chargement du fichier GSC: {e}")
+            return False
 
-class TrafilaturaExtractor:
-    """Classe pour extraire le contenu avec Trafilatura"""
-    
     @staticmethod
-    def extract_content_and_headings(url: str) -> CompetitorData:
-        """Extrait le contenu et la structure Hn avec Trafilatura"""
+    @lru_cache(maxsize=200_000)
+    def _normalize_url_for_comparison(url: str) -> str:
+        if not url: return ""
         try:
-            # Téléchargement avec trafilatura
-            downloaded = trafilatura.fetch_url(url)
-            
-            if not downloaded:
-                return CompetitorData(
-                    url=url, title="", meta_description="", headings={}, 
-                    position=0, raw_html="", extraction_success=False,
-                    error_message="Impossible de télécharger la page"
-                )
-            
-            # Parse HTML pour extraction manuelle des éléments
-            soup = BeautifulSoup(downloaded, 'html.parser')
-            
-            # Extraction du title
-            title_tag = soup.find('title')
-            title = title_tag.get_text().strip() if title_tag else ""
-            
-            # Extraction meta description
-            meta_desc = TrafilaturaExtractor._extract_meta_description(soup)
-            
-            # Extraction des headings directement depuis le HTML
-            headings = TrafilaturaExtractor._extract_headings_from_html(soup)
-            
-            return CompetitorData(
-                url=url,
-                title=title,
-                meta_description=meta_desc,
-                headings=headings,
-                position=0,  # Sera mis à jour après
-                raw_html=downloaded[:1000],  # Limite pour debug
-                extraction_success=True,
-                error_message=""
-            )
-            
-        except Exception as e:
-            logger.error(f"Erreur Trafilatura pour {url}: {e}")
-            return CompetitorData(
-                url=url, title="", meta_description="", headings={}, 
-                position=0, raw_html="", extraction_success=False,
-                error_message=str(e)
-            )
-    
+            url = url.lower()
+            url = re.sub(r'(\?|&)(utm_.*|gclid|fbclid)=[^&]*', '', url)
+            parsed = urllib.parse.urlparse(url)
+            netloc = parsed.netloc.replace('www.', '')
+            path = parsed.path.rstrip('/') or ''
+            query = '?' + urllib.parse.urlencode(sorted(urllib.parse.parse_qsl(parsed.query))) if parsed.query else ''
+            return f"{netloc}{path}{query}"
+        except: return url.lower()
+
+    def _is_classic_page(self, url: str) -> bool:
+        if not self.config.get('exclude_classic_pages', True): return False
+        for pattern in self.CLASSIC_PAGE_PATTERNS:
+            if re.search(pattern, url.lower()): return True
+        return False
+        
+    def _get_content_selectors(self) -> List[str]:
+        selectors = self.config.get('content_selectors', ['p', 'li', 'span']).copy()
+        if self.config.get('custom_class'):
+            selectors.append(f".{self.config['custom_class']}")
+        return selectors
+        
+    def detect_content_classes(self, zip_file_content: bytes) -> List[Tuple[str, int]]:
+        if not self.config.get('auto_detect_classes', True): return []
+        class_counter = Counter()
+        with zipfile.ZipFile(io.BytesIO(zip_file_content), 'r') as zip_ref:
+            html_files_info = [info for info in zip_ref.infolist() if info.filename.endswith('.html') and not info.is_dir()]
+            for file_info in html_files_info[:500]:
+                try:
+                    soup = BeautifulSoup(zip_ref.read(file_info.filename), 'html.parser')
+                    for element in soup.find_all(['div', 'section', 'article', 'main', 'p']):
+                        if element.get('class') and len(element.get_text(strip=True)) > 100:
+                            for cls in element.get('class'):
+                                if not cls.startswith(('js-', 'css-')): class_counter[cls] += 1
+                except Exception: continue
+        return class_counter.most_common(10)
+
     @staticmethod
-    def _extract_meta_description(soup: BeautifulSoup) -> str:
-        """Extrait la meta description depuis le HTML"""
-        # Meta description standard
-        meta_desc = soup.find('meta', attrs={'name': 'description'})
-        if meta_desc and meta_desc.get('content'):
-            return meta_desc.get('content', '').strip()
+    def _find_anchor_location(element: BeautifulSoup, anchor_text: str) -> str:
+        anchor_lower = anchor_text.lower()
+        for img in element.find_all('img', alt=True):
+            if anchor_lower in img['alt'].lower(): return "Attribut 'alt' (Image)"
+        if element.has_attr('title') and anchor_lower in element['title'].lower(): return "Attribut 'title'"
+        for child in element.find_all(title=True):
+             if anchor_lower in child['title'].lower(): return "Attribut 'title'"
+        return "Texte Principal"
+
+    def analyze_opportunities(self, zip_file_content: bytes, selected_keywords: Optional[List[str]]) -> List[Dict]:
+        if self.excel_data is None: return []
+        opportunities = []
+        selectors = self._get_content_selectors()
+        keyword_index = {}
+        working_data = self.excel_data.copy()
+        if selected_keywords: working_data = working_data[working_data['query'].isin(selected_keywords)]
+        for _, row in working_data.iterrows():
+            query = row['query'].lower().strip()
+            if query not in keyword_index or keyword_index[query]['priority'] < row['priority']:
+                keyword_index[query] = {'page': row['page'], 'priority': row['priority'], 'clicks': row['clicks'], 'original_query': row['query']}
+        if not keyword_index: return []
         
-        # Fallback sur property="og:description"
-        og_desc = soup.find('meta', attrs={'property': 'og:description'})
-        if og_desc and og_desc.get('content'):
-            return og_desc.get('content', '').strip()
+        A = None
+        run_fuzzy = self.config.get('use_fuzzy_matching', False)
+        if AHO_CORASICK_AVAILABLE:
+            A = ahocorasick.Automaton()
+            for keyword, data in keyword_index.items(): A.add_word(keyword, (keyword, data['original_query']))
+            A.make_automaton()
         
-        return ""
-    
-    @staticmethod
-    def _extract_headings_from_html(soup: BeautifulSoup) -> Dict[str, List[str]]:
-        """Extrait les headings directement depuis le HTML"""
-        headings = {}
-        
-        for level in range(1, 7):  # H1 à H6
-            tag_name = f'h{level}'
-            tags = soup.find_all(tag_name)
+        with zipfile.ZipFile(io.BytesIO(zip_file_content), 'r') as zip_ref:
+            # L'indexation est rapide et mise en cache, on peut la refaire
+            canonical_map = {}
+            feedback_placeholder = st.empty()
+            feedback_placeholder.text("Création de l'index des pages HTML...")
+            all_zip_files = [info for info in zip_ref.infolist() if info.filename.endswith('.html') and not info.is_dir()]
+            map_progress = feedback_placeholder.progress(0)
+            for i, file_info in enumerate(all_zip_files):
+                if i % 100 == 0: map_progress.progress((i+1)/len(all_zip_files))
+                try:
+                    content = zip_ref.read(file_info.filename)
+                    soup = BeautifulSoup(content, 'html.parser', from_encoding='utf-8')
+                    canonical_link = soup.find('link', rel='canonical', href=True)
+                    if canonical_link:
+                        canonical_map[self._normalize_url_for_comparison(canonical_link['href'])] = file_info.filename
+                except Exception: continue
             
-            if tags:
-                heading_texts = []
-                for tag in tags:
-                    text = tag.get_text().strip()
-                    if text and len(text) <= 200:  # Limite raisonnable
-                        # Nettoie le texte
-                        text = re.sub(r'\s+', ' ', text)
-                        heading_texts.append(text)
-                
-                if heading_texts:
-                    headings[f'H{level}'] = heading_texts
-        
-        return headings
-
-class RelevanceAnalyzer:
-    """Analyse la pertinence des concurrents"""
-    
-    @staticmethod
-    def calculate_keyword_presence_score(title: str, target_keyword: str) -> float:
-        """Calcule le score de présence du mot-clé dans le titre"""
-        if not title or not target_keyword:
-            return 0.0
-        
-        title_lower = title.lower()
-        keyword_lower = target_keyword.lower()
-        
-        # Score exact match
-        if keyword_lower in title_lower:
-            return 1.0
-        
-        # Score partiel basé sur les mots individuels
-        keyword_words = keyword_lower.split()
-        title_words = title_lower.split()
-        
-        matches = sum(1 for word in keyword_words if word in title_words)
-        return matches / len(keyword_words) if keyword_words else 0.0
-    
-    @staticmethod
-    def calculate_heading_structure_score(headings: Dict[str, List[str]]) -> float:
-        """Évalue la qualité de la structure des headings"""
-        score = 0.0
-        
-        # Présence H1 (obligatoire)
-        if 'H1' in headings and headings['H1']:
-            score += 0.4
-        
-        # Présence H2 (important)
-        if 'H2' in headings and len(headings['H2']) >= 2:
-            score += 0.3
-        
-        # Diversité de la structure
-        levels_present = [level for level in ['H1', 'H2', 'H3', 'H4'] if level in headings and headings[level]]
-        if len(levels_present) >= 3:
-            score += 0.3
-        
-        return min(score, 1.0)
-    
-    @classmethod
-    def calculate_relevance_score(cls, competitor_data: CompetitorData, target_keyword: str, position: int) -> float:
-        """Calcule le score de pertinence global"""
-        # Score position (plus c'est haut, mieux c'est)
-        position_score = max(0, (11 - position) / 10) if position <= 10 else 0
-        
-        # Score présence mot-clé
-        keyword_score = cls.calculate_keyword_presence_score(competitor_data.title, target_keyword)
-        
-        # Score structure headings
-        structure_score = cls.calculate_heading_structure_score(competitor_data.headings)
-        
-        # Score final pondéré
-        final_score = (position_score * 0.4 + keyword_score * 0.4 + structure_score * 0.2)
-        
-        return final_score
-
-class AIAnalyzer:
-    """Classe pour interfacer avec les différentes APIs d'IA"""
-    
-    def __init__(self, ai_provider: str, ai_model: str, api_key: str):
-        self.ai_provider = ai_provider.lower()
-        self.ai_model = ai_model
-        self.api_key = api_key
-        
-        if self.ai_provider == 'openai':
-            self.openai_client = OpenAI(api_key=api_key)
-        elif self.ai_provider == 'claude':
-            self.anthropic_client = anthropic.Anthropic(api_key=api_key)
-        elif self.ai_provider == 'gemini':
-            genai.configure(api_key=api_key)
-    
-    @staticmethod
-    def get_available_models(provider: str) -> List[Dict[str, str]]:
-        """Retourne les modèles disponibles pour chaque fournisseur"""
-        models = {
-            'claude': [
-                {
-                    'model_id': 'claude-3-5-sonnet-20241022',
-                    'name': 'Claude 3.5 Sonnet (Dernière version)',
-                    'description': '🚀 Le plus récent et performant - Recommandé',
-                    'best_for': 'Analyses SEO complexes et créativité'
-                },
-                {
-                    'model_id': 'claude-3-opus-20240229',
-                    'name': 'Claude 3 Opus',
-                    'description': '💪 Le plus puissant pour analyses complexes',
-                    'best_for': 'Analyses approfondies et raisonnement complexe'
-                },
-                {
-                    'model_id': 'claude-3-sonnet-20240229',
-                    'name': 'Claude 3 Sonnet',
-                    'description': '⚖️ Équilibré performance/rapidité',
-                    'best_for': 'Usage général équilibré'
-                }
-            ],
-            'openai': [
-                {
-                    'model_id': 'gpt-4o',
-                    'name': 'GPT-4o (Omni)',
-                    'description': '🚀 Le plus récent et optimisé - Recommandé',
-                    'best_for': 'Analyses SEO avancées avec vision multimodale'
-                },
-                {
-                    'model_id': 'gpt-4-turbo',
-                    'name': 'GPT-4 Turbo',
-                    'description': '💨 Version optimisée pour la vitesse',
-                    'best_for': 'Analyses rapides et efficaces'
-                },
-                {
-                    'model_id': 'gpt-4',
-                    'name': 'GPT-4',
-                    'description': '🎯 Version standard puissante',
-                    'best_for': 'Analyses détaillées et précises'
-                }
-            ],
-            'gemini': [
-                {
-                    'model_id': 'gemini-1.5-pro',
-                    'name': 'Gemini 1.5 Pro',
-                    'description': '🚀 Le plus performant - Recommandé',
-                    'best_for': 'Analyses SEO complexes avec large contexte'
-                },
-                {
-                    'model_id': 'gemini-1.5-flash',
-                    'name': 'Gemini 1.5 Flash',
-                    'description': '⚡ Plus rapide et efficace',
-                    'best_for': 'Analyses rapides avec bon rapport qualité/vitesse'
-                }
-            ]
-        }
-        return models.get(provider.lower(), [])
-    
-    def analyze_with_custom_prompt(self, prompt: str) -> str:
-        """Effectue une analyse avec un prompt personnalisé"""
-        try:
-            if self.ai_provider == 'openai':
-                # Nouvelle syntaxe OpenAI v1.0+
-                response = self.openai_client.chat.completions.create(
-                    model=self.ai_model,
-                    messages=[
-                        {"role": "system", "content": "Tu es un expert SEO senior."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=1500
-                )
-                return response.choices[0].message.content
-                
-            elif self.ai_provider == 'claude':
-                # Syntaxe Claude (correcte)
-                message = self.anthropic_client.messages.create(
-                    model=self.ai_model,
-                    max_tokens=1500,
-                    temperature=0.3,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                return message.content[0].text
-                
-            elif self.ai_provider == 'gemini':
-                # Syntaxe Gemini (correcte)
-                model = genai.GenerativeModel(self.ai_model)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3,
-                        max_output_tokens=1500
-                    )
-                )
-                return response.text
-                
-        except Exception as e:
-            logger.error(f"Erreur API {self.ai_provider} ({self.ai_model}): {e}")
-            return f"Erreur lors de l'analyse: {e}"
-
-class PromptTemplates:
-    """Templates de prompts pour les différentes analyses"""
-    
-    @staticmethod
-    def get_structure_prompt(keyword: str, competitors_data: List[CompetitorData]) -> str:
-        """Génère le prompt pour l'analyse de structure"""
-        
-        prompt = f"""Tu es un expert SEO.
-J'ai collecté plusieurs contenus concurrents (titres, Hn, paragraphes) sur la requête "{keyword}".
-Analyse-les en profondeur pour :
-1. Identifier les intentions de recherche couvertes et manquantes.
-2. Construire une structure Hn complète et hiérarchisée (H1, H2, H3, H4 si nécessaire).
-3. Optimiser le plan pour répondre à toutes les questions des internautes et surpasser les concurrents.
-4. La structure doit être claire, logique, sans répétitions inutiles, et inclure des variantes sémantiques du mot-clé.
-
-DONNÉES DES CONCURRENTS:
-"""
-        
-        for i, comp in enumerate(competitors_data, 1):
-            if comp.extraction_success:
-                prompt += f"""
-CONCURRENT {i} (Position {comp.position}):
-URL: {comp.url}
-TITLE: {comp.title}
-STRUCTURE Hn:
-"""
-                for level, headings in comp.headings.items():
-                    for heading in headings:
-                        prompt += f"  {level}: {heading}\n"
-        
-        prompt += """
-Donne-moi uniquement :
-- Un H1 optimisé (avec le mot-clé principal).
-- Les H2/H3/H4 proposés sous forme d'arborescence claire.
-
-Format de réponse attendu:
-**H1:** [Ton H1 optimisé]
-
-**H2:** [Premier H2]
-* **H3:** [Premier H3]
-* **H3:** [Deuxième H3]
-
-**H2:** [Deuxième H2]
-* **H3:** [Premier H3]
-* **H3:** [Deuxième H3]
-  * **H4:** [H4 si nécessaire]
-
-etc.
-"""
-        
-        return prompt
-    
-    @staticmethod
-    def get_title_prompt(keyword: str, competitors_data: List[CompetitorData]) -> str:
-        """Génère le prompt pour l'analyse de title"""
-        
-        prompt = f"""Tu es un expert SEO.
-J'ai scrappé plusieurs titles de concurrents sur la requête "{keyword}".
-Analyse-les pour :
-1. Identifier leurs forces et faiblesses.
-2. Créer un Title unique, différenciant, et optimisé SEO.
-3. Respecter une longueur inférieure à 70 caractères.
-4. Inclure le mot-clé principal sans suroptimisation, avec un ton attractif.
-
-TITLES DES CONCURRENTS:
-"""
-        
-        for i, comp in enumerate(competitors_data, 1):
-            if comp.extraction_success and comp.title:
-                prompt += f"""
-Position {comp.position}: {comp.title}
-URL: {comp.url}
-"""
-        
-        prompt += """
-Donne-moi uniquement :
-- Une proposition de Title optimisé.
-
-Format de réponse attendu:
-**Title optimisé:** [Ton title ici]
-"""
-        
-        return prompt
-    
-    @staticmethod
-    def get_meta_description_prompt(keyword: str, competitors_data: List[CompetitorData]) -> str:
-        """Génère le prompt pour l'analyse de meta description"""
-        
-        prompt = f"""Tu es un expert SEO.
-J'ai scrappé plusieurs meta descriptions de concurrents sur la requête "{keyword}".
-Analyse-les pour :
-1. Identifier leurs forces et faiblesses.
-2. Créer une Meta Description unique, différenciante, et optimisée SEO.
-3. Respecter une longueur entre 140-155 caractères.
-4. Inclure le mot-clé principal et un appel à l'action attractif.
-
-META DESCRIPTIONS DES CONCURRENTS:
-"""
-        
-        for i, comp in enumerate(competitors_data, 1):
-            if comp.extraction_success and comp.meta_description:
-                prompt += f"""
-Position {comp.position}: {comp.meta_description}
-URL: {comp.url}
-"""
-        
-        prompt += """
-Donne-moi uniquement :
-- Une proposition de Meta Description optimisée.
-
-Format de réponse attendu:
-**Meta Description optimisée:** [Ta meta description ici]
-"""
-        
-        return prompt
-
-class WordGenerator:
-    """Classe pour générer le document Word final"""
-    
-    @staticmethod
-    def create_seo_brief_document(seo_brief: SEOBrief) -> io.BytesIO:
-        """Génère le document Word du brief SEO"""
-        doc = Document()
-        
-        # Titre principal
-        title = doc.add_heading(f'Brief SEO - {seo_brief.target_keyword}', 0)
-        title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        
-        # Informations contextuelles
-        context_p = doc.add_paragraph(f'Marché: {seo_brief.country} | Langue: {seo_brief.language}')
-        context_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        
-        # Date
-        date_p = doc.add_paragraph(f'Date de génération: {time.strftime("%d/%m/%Y")}')
-        date_p.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        
-        doc.add_page_break()
-        
-        # Section SEO On-Page
-        doc.add_heading('1. Optimisation On-Page', level=1)
-        
-        # Title
-        doc.add_heading('Balise Title', level=2)
-        title_p = doc.add_paragraph(seo_brief.optimized_title)
-        title_p.style = 'Intense Quote'
-        doc.add_paragraph(f'Caractères: {len(seo_brief.optimized_title)}')
-        
-        # Meta Description
-        doc.add_heading('Meta Description', level=2)
-        meta_p = doc.add_paragraph(seo_brief.optimized_meta_description)
-        meta_p.style = 'Intense Quote'
-        doc.add_paragraph(f'Caractères: {len(seo_brief.optimized_meta_description)}')
-        
-        # Structure Hn
-        doc.add_heading('2. Structure des Headings', level=1)
-        doc.add_paragraph(seo_brief.headings_structure)
-        
-        # Sources
-        if seo_brief.competitors_analyzed:
-            doc.add_heading('3. Sources Analysées', level=1)
-            for i, source in enumerate(seo_brief.competitors_analyzed, 1):
-                doc.add_paragraph(f'{i}. {source}')
-        
-        # Sauvegarde en mémoire
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        
-        return buffer
-
-class SEOBriefGenerator:
-    """Classe principale qui orchestre tout le processus"""
-    
-    def __init__(self):
-        self.dataforseo_api = None
-        self.extractor = TrafilaturaExtractor()
-        self.analyzer = RelevanceAnalyzer()
-        self.ai_analyzer = None
-        
-    def setup_apis(self, dataforseo_username: str, dataforseo_password: str, 
-                   ai_provider: str, ai_model: str, ai_api_key: str):
-        """Configure les APIs"""
-        self.dataforseo_api = DataForSEOAPI(dataforseo_username, dataforseo_password)
-        self.ai_analyzer = AIAnalyzer(ai_provider, ai_model, ai_api_key)
-    
-    def search_and_extract_competitors(self, target_keyword: str, country: str, language: str, 
-                                     num_results: int = 10) -> List[CompetitorData]:
-        """Recherche et extrait le contenu des concurrents"""
-        if not self.dataforseo_api:
-            raise ValueError("DataForSEO API non configurée")
-        
-        # Récupération de la configuration du marché
-        market_config = DataForSEOConfig.get_market_config(country, language)
-        
-        # Recherche SERP via DataForSEO
-        search_results = self.dataforseo_api.search_serp_live(
-            target_keyword, 
-            market_config["location_code"],
-            market_config["language_code"],
-            num_results
-        )
-        
-        # Extraction du contenu avec Trafilatura pour chaque résultat
-        competitors = []
-        for result in search_results:
-            competitor_data = self.extractor.extract_content_and_headings(result['url'])
-            competitor_data.position = result['position']
+            source_urls_to_scan = self.excel_data['page'].unique()
+            max_pages = self.config.get('max_pages_to_analyze', len(source_urls_to_scan))
+            urls_to_process = source_urls_to_scan[:max_pages]
+            mapped_count = 0
             
-            # Fallback sur les données DataForSEO si extraction échoue
-            if not competitor_data.extraction_success:
-                competitor_data.title = result.get('title', '')
-                competitor_data.meta_description = result.get('meta_description', '')
+            feedback_placeholder.text("Analyse des opportunités en cours...")
+            progress_bar = feedback_placeholder.progress(0)
             
-            # Calcul du score de pertinence
-            competitor_data.relevance_score = self.analyzer.calculate_relevance_score(
-                competitor_data, target_keyword, result['position']
-            )
+            for i, source_url in enumerate(urls_to_process):
+                progress_bar.progress((i + 1) / len(urls_to_process), text=f"Analyse... {source_url[:80]}")
+                if self._is_classic_page(source_url): continue
+                normalized_source_key = self._normalize_url_for_comparison(source_url)
+                html_filename = canonical_map.get(normalized_source_key)
+                if not html_filename: continue
+                mapped_count += 1
+                try:
+                    html_content = zip_ref.read(html_filename).decode('utf-8', errors='ignore')
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    existing_links_normalized = {self._normalize_url_for_comparison(urllib.parse.urljoin(source_url, link.get('href'))) for link in soup.find_all('a', href=True) if link.get('href') and not link.get('href').startswith(('mailto:', 'tel:'))}
+                    for element in soup.select(', '.join(selectors)):
+                        text_content = element.get_text(" ", strip=True)
+                        if len(text_content) < self.config.get('min_keyword_length', 3): continue
+                        text_lower = text_content.lower()
+                        
+                        found_kws_in_element = set()
+                        if A:
+                            for _, (keyword, original_query) in A.iter(text_lower):
+                                if keyword in found_kws_in_element: continue
+                                found_kws_in_element.add(keyword)
+                                opportunity = self._create_opportunity(original_query, keyword_index[keyword], source_url, existing_links_normalized, 'exact', element)
+                                if opportunity: opportunities.append(opportunity)
+                        
+                        if run_fuzzy and FUZZY_AVAILABLE:
+                            for keyword, data in keyword_index.items():
+                                if keyword in found_kws_in_element: continue
+                                similarity = fuzz.token_set_ratio(keyword, text_lower)
+                                if similarity >= self.config.get('fuzzy_threshold', 85):
+                                    found_kws_in_element.add(keyword)
+                                    opportunity = self._create_opportunity(data['original_query'], data, source_url, existing_links_normalized, f'fuzzy ({similarity}%)', element)
+                                    if opportunity: opportunities.append(opportunity)
+                except Exception: continue
             
-            competitors.append(competitor_data)
-        
-        return competitors
-    
-    def auto_select_competitors(self, competitors: List[CompetitorData], max_competitors: int = 5) -> List[CompetitorData]:
-        """Sélection automatique des meilleurs concurrents"""
-        # Trie par score de pertinence
-        sorted_competitors = sorted(competitors, key=lambda x: x.relevance_score, reverse=True)
-        
-        # Sélectionne les meilleurs
-        selected = sorted_competitors[:max_competitors]
-        for competitor in selected:
-            competitor.selected = True
-        
-        return selected
+            feedback_placeholder.empty()
+            if len(urls_to_process) > 0:
+                st.info(f"🔗 **Matching réussi :** {mapped_count} sur {len(urls_to_process)} URLs GSC analysées ont été trouvées dans le fichier ZIP ({mapped_count/len(urls_to_process):.1%}).")
 
-# Interface Streamlit
+        opportunities = [dict(t) for t in {tuple(d.items()) for d in opportunities}]
+        opportunities.sort(key=lambda x: x['priority'], reverse=True)
+        return opportunities
+
+    def _create_opportunity(self, anchor_text, target_data, source_url, existing_links_normalized, match_type, element) -> Optional[Dict]:
+        target_page_url = target_data['page']
+        normalized_source = self._normalize_url_for_comparison(source_url)
+        normalized_target = self._normalize_url_for_comparison(target_page_url)
+        if normalized_source == normalized_target: return None
+        link_exists = normalized_target in existing_links_normalized
+        anchor_location = self._find_anchor_location(element, anchor_text)
+        element_tag, classes = element.name, element.get('class', [])
+        class_str = f".{'.'.join(classes)}" if classes else ""
+        return {'source_url': source_url, 'target_url': target_page_url, 'anchor': anchor_text, 'priority': target_data['priority'], 'clicks': target_data['clicks'], 'match_type': match_type, 'element_source': f"<{element_tag}{class_str}>", 'existing_link': "❌ Lien présent" if link_exists else "✅ Nouvelle opportunité", 'anchor_location': anchor_location}
+
+# --- FONCTIONS DE LIAISON (pour le cache Streamlit) ---
+@st.cache_data
+def load_gsc_data_cached(uploaded_file, config):
+    analyzer = InternalLinkingAnalyzer(config)
+    if analyzer.load_excel_data(uploaded_file):
+        return analyzer.excel_data
+    return None
+
+# --- INTERFACE STREAMLIT ---
 def main():
-    st.set_page_config(
-        page_title="SEO Brief Generator Pro",
-        page_icon="🚀",
-        layout="wide"
-    )
+    st.title("🔗 Analyseur de Maillage Interne SEO")
+    st.markdown("**Stratégie 'Canonical First' : la solution la plus robuste pour une analyse fiable.**")
     
-    st.title("🚀 Générateur de Brief SEO Professionnel")
-    st.markdown("*Analyse competitive avancée avec DataForSEO + Trafilatura + IA spécialisée*")
+    if 'config' not in st.session_state:
+        st.session_state.config = {
+            'min_clicks': 0, 'min_keyword_length': 3, 'exclude_stopwords': True, 'exclude_classic_pages': True,
+            'content_selectors': ['p', 'li', 'span'], 'custom_class': '', 'max_position': 50,
+            'manual_keyword_selection': False, 'auto_detect_classes': True, 'max_pages_to_analyze': 10000,
+            'use_fuzzy_matching': False, 'fuzzy_threshold': 85
+        }
+    if 'gsc_data' not in st.session_state: st.session_state.gsc_data = None
+    if 'zip_content' not in st.session_state: st.session_state.zip_content = None
+    if 'results' not in st.session_state: st.session_state.results = None
+    if 'detected_classes_list' not in st.session_state: st.session_state.detected_classes_list = []
     
-    # Sidebar pour la configuration
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        # APIs DataForSEO
-        st.subheader("🔍 DataForSEO API")
-        dataforseo_username = st.text_input("Username DataForSEO", type="password")
-        dataforseo_password = st.text_input("Password DataForSEO", type="password")
-        
-        # Configuration IA
-        st.subheader("🤖 Intelligence Artificielle")
-        ai_provider = st.selectbox("Fournisseur IA", ["Claude", "OpenAI", "Gemini"])
-        
-        # Récupération des modèles disponibles
-        available_models = AIAnalyzer.get_available_models(ai_provider.lower())
-        
-        if available_models:
-            model_options = [f"{model['name']}" for model in available_models]
-            selected_model_index = st.selectbox(
-                f"Modèle {ai_provider}",
-                range(len(model_options)),
-                format_func=lambda x: model_options[x]
-            )
-            
-            selected_model_info = available_models[selected_model_index]
-            st.info(f"**{selected_model_info['description']}**\n\n*Idéal pour :* {selected_model_info['best_for']}")
-            ai_model = selected_model_info['model_id']
-        
-        ai_api_key = st.text_input(f"Clé API {ai_provider}", type="password")
-        
-        # Mode de fonctionnement
-        st.subheader("⚡ Mode de fonctionnement")
-        auto_mode = st.toggle("Mode automatique", value=False, help="Exécution automatique de toutes les étapes 1-5 jusqu'au téléchargement")
-        
-        if not auto_mode:
-            max_competitors = st.slider("Nombre max de concurrents à analyser", 3, 10, 5)
-    
-    # Interface principale
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header("🎯 Configuration de recherche")
-        
-        # Sélection du marché
-        st.subheader("🌍 Marché cible")
-        countries = list(DataForSEOConfig.SUPPORTED_MARKETS.keys())
-        selected_country = st.selectbox("Pays", countries)
-        
-        # Sélection de la langue
-        available_languages = DataForSEOConfig.get_available_languages(selected_country)
-        selected_language = st.selectbox("Langue", available_languages)
-        
-        # Mot-clé cible
-        target_keyword = st.text_input("Mot-clé principal", placeholder="Exemple: comment choisir un lit coffre")
-        
-        num_results = st.slider("Nombre de résultats SERP à analyser", 5, 15, 10)
-    
-    with col2:
-        if selected_country and selected_language:
-            config = DataForSEOConfig.get_market_config(selected_country, selected_language)
-            st.info(f"""**Configuration sélectionnée:**
-📍 Pays: {selected_country}
-🗣️ Langue: {selected_language}
-🔗 Domaine: {config['google_domain']}""")
-    
-    # Initialisation du générateur
-    if 'generator' not in st.session_state:
-        st.session_state.generator = SEOBriefGenerator()
-    
-    # Validation des APIs
-    apis_configured = all([dataforseo_username, dataforseo_password, ai_api_key])
-    
-    if not apis_configured:
-        st.warning("⚠️ Veuillez configurer toutes les APIs dans la barre latérale")
-        return
-    
-    try:
-        st.session_state.generator.setup_apis(
-            dataforseo_username, dataforseo_password, 
-            ai_provider.lower(), ai_model, ai_api_key
-        )
-    except Exception as e:
-        st.error(f"Erreur configuration API: {e}")
-        return
-    
-    # Initialisation des variables de session
-    if 'competitors_data' not in st.session_state:
-        st.session_state.competitors_data = []
-    if 'search_completed' not in st.session_state:
-        st.session_state.search_completed = False
-    
-    # MODE AUTOMATIQUE - Exécution complète
-    if auto_mode:
-        if st.button("🚀 Génération automatique complète du Brief SEO", type="primary", disabled=not target_keyword):
-            
-            # Étape 1: Recherche et extraction
-            with st.spinner("🔍 Étape 1/5 - Recherche SERP et extraction du contenu..."):
-                try:
-                    competitors_data = st.session_state.generator.search_and_extract_competitors(
-                        target_keyword, selected_country, selected_language, num_results
-                    )
-                    
-                    if not competitors_data:
-                        st.error("❌ Aucun concurrent trouvé")
-                        return
-                    
-                    st.session_state.competitors_data = competitors_data
-                    st.session_state.search_completed = True
-                    st.success(f"✅ Étape 1/5 - {len(competitors_data)} concurrents trouvés et analysés")
-                    
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la recherche: {e}")
-                    return
-            
-            # Étape 2: Sélection automatique
-            with st.spinner("🤖 Étape 2/5 - Sélection automatique des meilleurs concurrents..."):
-                selected_competitors = st.session_state.generator.auto_select_competitors(competitors_data, max_competitors=5)
-                st.session_state.selected_competitors = selected_competitors
-                st.success(f"✅ Étape 2/5 - {len(selected_competitors)} concurrents sélectionnés automatiquement")
-            
-            # Étape 3: Analyse structure
-            with st.spinner("🏗️ Étape 3/5 - Analyse de la structure Hn..."):
-                structure_prompt = PromptTemplates.get_structure_prompt(target_keyword, selected_competitors)
-                structure_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(structure_prompt)
-                st.session_state.structure_result = structure_result
-                st.success("✅ Étape 3/5 - Analyse de structure terminée")
-            
-            # Étape 4: Analyse title
-            with st.spinner("🏷️ Étape 4/5 - Analyse du Title..."):
-                title_prompt = PromptTemplates.get_title_prompt(target_keyword, selected_competitors)
-                title_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(title_prompt)
-                st.session_state.title_result = title_result
-                st.success("✅ Étape 4/5 - Analyse de title terminée")
-            
-            # Étape 5: Analyse meta description
-            with st.spinner("📝 Étape 5/5 - Analyse de la Meta Description..."):
-                meta_prompt = PromptTemplates.get_meta_description_prompt(target_keyword, selected_competitors)
-                meta_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(meta_prompt)
-                st.session_state.meta_result = meta_result
-                st.success("✅ Étape 5/5 - Analyse de meta description terminée")
-            
-            # Génération automatique du document Word
-            with st.spinner("📄 Génération du document Word..."):
-                try:
-                    seo_brief = SEOBrief(
-                        target_keyword=target_keyword,
-                        optimized_title=st.session_state.title_result,
-                        optimized_meta_description=st.session_state.meta_result,
-                        headings_structure=st.session_state.structure_result,
-                        country=selected_country,
-                        language=selected_language,
-                        competitors_analyzed=[comp.url for comp in st.session_state.selected_competitors]
-                    )
-                    
-                    word_buffer = WordGenerator.create_seo_brief_document(seo_brief)
-                    
-                    st.success("🎉 Génération automatique terminée avec succès !")
-                    
-                    st.download_button(
-                        label="📄 Télécharger le Brief SEO (.docx)",
-                        data=word_buffer,
-                        file_name=f"brief_seo_{target_keyword.replace(' ', '_')}_{selected_country.split(' ')[1].lower()}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                    
-                except Exception as e:
-                    st.error(f"❌ Erreur génération Word: {e}")
-    
+    st.sidebar.header("⚙️ Configuration")
+    cfg = st.session_state.config
+    st.sidebar.subheader("🎯 Filtres de Données")
+    cfg['min_clicks'] = st.sidebar.number_input("Minimum de clics", 0, 1000, cfg.get('min_clicks', 0), help="Ignorer les mots-clés qui ont généré moins de clics que ce seuil.")
+    cfg['min_keyword_length'] = st.sidebar.number_input("Longueur min. mots-clés", 1, 20, cfg.get('min_keyword_length', 3), help="Ignorer les mots-clés plus courts que ce nombre de caractères.")
+    cfg['max_position'] = st.sidebar.number_input("Position max. SERPs", 0, 100, cfg.get('max_position', 50), help="Ignorer les mots-clés dont la position moyenne est au-delà de ce seuil (0 = pas de limite).")
+    st.sidebar.subheader("⚡️ Optimisation")
+    cfg['max_pages_to_analyze'] = st.sidebar.number_input("Limite de pages à analyser (GSC)", 100, 500000, cfg.get('max_pages_to_analyze', 10000), help="Limite le nombre d'URLs GSC uniques à analyser pour accélérer le traitement sur de très gros sites.")
+    st.sidebar.subheader("🚫 Exclusions")
+    cfg['exclude_stopwords'] = st.sidebar.checkbox("Exclure les stop words", cfg.get('exclude_stopwords', True), help="Exclut les mots vides courants (le, la, de, etc.) de l'analyse.")
+    cfg['exclude_classic_pages'] = st.sidebar.checkbox("Exclure pages classiques", cfg.get('exclude_classic_pages', True), help="Exclut les pages comme 'contact', 'mentions légales', 'CGU', etc.")
+    st.sidebar.subheader("🔍 Analyse Floue")
+    if FUZZY_AVAILABLE:
+        cfg['use_fuzzy_matching'] = st.sidebar.checkbox("Activer l'analyse floue", cfg.get('use_fuzzy_matching', False), help="En plus de la recherche exacte, cherche des variations de mots-clés (pluriels, synonymes...). Rend l'analyse plus lente.")
+        if cfg['use_fuzzy_matching']:
+            cfg['fuzzy_threshold'] = st.sidebar.slider("Seuil de similarité (%)", 70, 100, cfg.get('fuzzy_threshold', 85), help="Seuil à partir duquel une variation est considérée comme une opportunité.")
     else:
-        # MODE MANUEL - Étapes séparées
-        # Étape 1: Recherche et extraction des concurrents
-        if st.button("🔍 1. Rechercher et extraire les concurrents", type="primary", disabled=not target_keyword):
-            
-            with st.spinner("🔍 Recherche SERP et extraction du contenu..."):
-                try:
-                    competitors_data = st.session_state.generator.search_and_extract_competitors(
-                        target_keyword, selected_country, selected_language, num_results
-                    )
-                    
-                    if not competitors_data:
-                        st.error("❌ Aucun concurrent trouvé")
-                        return
-                    
-                    st.session_state.competitors_data = competitors_data
-                    st.session_state.search_completed = True
-                    
-                    st.success(f"✅ {len(competitors_data)} concurrents trouvés et analysés")
-                    
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la recherche: {e}")
-                    return
+        st.sidebar.warning("Pour l'analyse floue, installez `fuzzywuzzy` et `python-levenshtein`.", icon="⚠️")
+        cfg['use_fuzzy_matching'] = False
+    st.sidebar.subheader("🎯 Ciblage du Contenu")
+    cfg['manual_keyword_selection'] = st.sidebar.checkbox("🎯 Sélection manuelle des mots-clés", cfg.get('manual_keyword_selection', False), help="Permet de choisir manuellement les mots-clés à analyser au lieu de tous les prendre.")
+    cfg['auto_detect_classes'] = st.sidebar.checkbox("🤖 Détection auto des classes CSS", cfg.get('auto_detect_classes', True), help="Analyse le HTML pour trouver les classes CSS contenant le plus de texte.")
+    cfg['content_selectors'] = st.sidebar.multiselect("Sélecteurs de contenu", ['p', 'li', 'span', 'div', 'h1', 'h2', 'h3'], cfg.get('content_selectors', ['p', 'li', 'span']), help="Balises HTML dans lesquelles chercher les opportunités.")
+    if st.session_state.detected_classes_list:
+        selected_class = st.sidebar.selectbox("Utiliser une classe CSS détectée ?", options=[''] + st.session_state.detected_classes_list, help="Cible l'analyse sur une classe CSS spécifique trouvée lors de la détection automatique.")
+        cfg['custom_class'] = selected_class
+    else:
+        cfg['custom_class'] = st.sidebar.text_input("Ajouter une classe CSS manuellement", cfg.get('custom_class', ''), help="Entrez une classe CSS (sans le '.') pour cibler une zone de contenu spécifique.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📊 Données Google Search Console")
+        excel_file = st.file_uploader("Uploadez votre fichier Excel/CSV", type=['xlsx', 'xls', 'csv'])
+        if excel_file:
+            st.session_state.gsc_data = load_gsc_data_cached(excel_file, cfg)
+            if st.session_state.gsc_data is not None: st.success(f"Données GSC chargées: {len(st.session_state.gsc_data)} lignes.")
+    with col2:
+        st.subheader("📁 Fichiers HTML")
+        if st.session_state.gsc_data is not None:
+            zip_file = st.file_uploader("Uploadez le fichier ZIP HTML", type=['zip'])
+            if zip_file:
+                st.session_state.zip_content = zip_file.getvalue()
+                st.success(f"Fichier ZIP chargé ({len(st.session_state.zip_content)/1e6:.2f} MB).")
+                if cfg['auto_detect_classes'] and not st.session_state.detected_classes_list:
+                    with st.spinner("Détection des classes CSS..."):
+                        analyzer = InternalLinkingAnalyzer(cfg)
+                        st.session_state.detected_classes_list = [cls for cls, _ in analyzer.detect_content_classes(st.session_state.zip_content)]
+                        if st.session_state.detected_classes_list: st.rerun()
+        else: st.info("📊 Veuillez d'abord charger les données Excel.")
+
+    selected_keywords = None
+    if st.session_state.gsc_data is not None and cfg['manual_keyword_selection']:
+        st.subheader("🎯 Sélection des Mots-clés à Analyser")
+        available_keywords = sorted(st.session_state.gsc_data['query'].unique().tolist())
+        selected_keywords = st.multiselect("Sélectionnez les mots-clés:", options=available_keywords)
     
-    # Affichage des données extraites (debugging)
-    if st.session_state.search_completed and st.session_state.competitors_data:
-        st.header("🔍 Données extraites (Debug)")
-        
-        competitors_data = st.session_state.competitors_data
-        
-        # Tableau de debug principal
-        debug_data = []
-        for comp in competitors_data:
-            debug_data.append({
-                "Position": comp.position,
-                "URL": comp.url,
-                "Title": comp.title[:50] + "..." if len(comp.title) > 50 else comp.title,
-                "Meta Description": comp.meta_description[:50] + "..." if len(comp.meta_description) > 50 else comp.meta_description,
-                "Headings trouvés": ", ".join(comp.headings.keys()) if comp.headings else "Aucun",
-                "Score relevance": f"{comp.relevance_score:.2f}",
-                "Extraction OK": "✅" if comp.extraction_success else "❌",
-                "Erreur": comp.error_message[:30] + "..." if comp.error_message and len(comp.error_message) > 30 else comp.error_message
-            })
-        
-        df_debug = pd.DataFrame(debug_data)
-        st.dataframe(df_debug, use_container_width=True)
-        
-        # Nouveau tableau détaillé des structures Hn
-        st.subheader("📊 Structure Hn détaillée extraite par Trafilatura")
-        
-        headings_data = []
-        for comp in competitors_data:
-            if comp.extraction_success and comp.headings:
-                for level, headings_list in comp.headings.items():
-                    for heading in headings_list:
-                        headings_data.append({
-                            "Position": comp.position,
-                            "URL": comp.url[:40] + "..." if len(comp.url) > 40 else comp.url,
-                            "Level": level,
-                            "Heading": heading,
-                            "Caractères": len(heading)
-                        })
-        
-        if headings_data:
-            df_headings = pd.DataFrame(headings_data)
-            # Tri par position puis par level
-            df_headings = df_headings.sort_values(['Position', 'Level'])
-            st.dataframe(df_headings, use_container_width=True)
+    if st.session_state.gsc_data is not None and st.session_state.zip_content is not None:
+        can_analyze = not cfg['manual_keyword_selection'] or (cfg['manual_keyword_selection'] and selected_keywords is not None)
+        if can_analyze:
+            if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True):
+                analyzer = InternalLinkingAnalyzer(cfg)
+                analyzer.excel_data = st.session_state.gsc_data
+                st.session_state.results = analyzer.analyze_opportunities(st.session_state.zip_content, selected_keywords)
+        elif cfg['manual_keyword_selection']:
+            st.warning("⚠️ Veuillez sélectionner au moins un mot-clé pour lancer l'analyse.")
+
+    if st.session_state.results is not None:
+        if st.session_state.results:
+            df_display = pd.DataFrame(st.session_state.results).rename(columns={'source_url': 'URL Source', 'target_url': 'Page à Mailler', 'anchor': 'Ancre de Lien', 'element_source': 'Élément Source', 'existing_link': 'Lien Existant', 'priority': 'Priorité', 'match_type': 'Type de Match', 'anchor_location': 'Source Ancre'})
+            st.header("📋 Résultats de l'Analyse")
+            st.dataframe(df_display[['URL Source', 'Ancre de Lien', 'Source Ancre', 'Page à Mailler', 'Élément Source', 'Type de Match', 'Lien Existant', 'Priorité']], use_container_width=True, column_config={"URL Source": st.column_config.LinkColumn(), "Page à Mailler": st.column_config.LinkColumn()})
+            st.subheader("📥 Export des Résultats")
+            col_export1, col_export2 = st.columns(2)
+            with col_export1:
+                st.download_button("📥 Télécharger CSV", df_display.to_csv(index=False, encoding='utf-8-sig'), "opportunites_maillage.csv", "text/csv", use_container_width=True)
+            with col_export2:
+                if XLSX_EXPORT_AVAILABLE:
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer: df_display.to_excel(writer, index=False, sheet_name='Opportunités')
+                    st.download_button("📄 Télécharger Excel (.xlsx)", output.getvalue(), "opportunites_maillage.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                else: st.warning("Pour l'export Excel, installez `openpyxl`", icon="⚠️")
+            st.divider()
+            st.header("📈 Tableau de Bord de l'Analyse")
+            total_ops, new_ops = len(df_display), len(df_display[df_display['Lien Existant'] == '✅ Nouvelle opportunité'])
+            col_metric1, col_metric2, col_metric3 = st.columns(3)
+            col_metric1.metric("Opportunités Totales", total_ops)
+            if total_ops > 0:
+                col_metric2.metric("Nouvelles Opportunités ✅", new_ops, f"{new_ops/total_ops:.1%}")
+                col_metric3.metric("Liens Déjà Présents ❌", total_ops - new_ops, f"{(total_ops - new_ops)/total_ops:.1%}")
+            col_graph1, col_graph2 = st.columns(2)
+            with col_graph1:
+                st.write("**Top 10 Pages Sources d'Opportunités**"); st.bar_chart(df_display['URL Source'].value_counts().head(10))
+                st.write("**Distribution par Type de Match**"); st.bar_chart(df_display['Type de Match'].value_counts())
+            with col_graph2:
+                st.write("**Top 10 Pages Cibles (à mailler)**"); st.bar_chart(df_display['Page à Mailler'].value_counts().head(10))
+                st.write("**Distribution par Source de l'Ancre**"); st.bar_chart(df_display['Source Ancre'].value_counts())
         else:
-            st.warning("⚠️ Aucune structure Hn extraite par Trafilatura")
-        
-        # Sélection des concurrents à analyser (MODE MANUEL uniquement)
-        if not auto_mode:
-            st.subheader("📋 Sélection manuelle des concurrents à analyser")
+            st.warning("⚠️ Aucune opportunité trouvée avec la configuration actuelle.")
             
-            if 'selected_competitors' not in st.session_state:
-                st.session_state.selected_competitors = []
-            
-            selected_indices = st.multiselect(
-                "Choisissez les concurrents à inclure dans l'analyse",
-                range(len(competitors_data)),
-                format_func=lambda x: f"#{competitors_data[x].position} - {competitors_data[x].title[:60]}... (Score: {competitors_data[x].relevance_score:.2f})",
-                default=list(range(min(5, len(competitors_data))))  # Sélectionne les 5 premiers par défaut
-            )
-            
-            st.session_state.selected_competitors = [competitors_data[i] for i in selected_indices]
-        
-        # Continuer avec les analyses si des concurrents sont sélectionnés (MODE MANUEL)
-        if not auto_mode and st.session_state.get('selected_competitors') and len(st.session_state.selected_competitors) > 0:
-            st.success(f"✅ {len(st.session_state.selected_competitors)} concurrents sélectionnés pour l'analyse")
-            
-            # Étape 2: Analyse de la structure Hn
-            st.header("🏗️ 2. Analyse de la structure Hn")
-            
-            # Génération du prompt pour la structure
-            structure_prompt = PromptTemplates.get_structure_prompt(target_keyword, st.session_state.selected_competitors)
-            
-            # Zone de texte modifiable pour le prompt
-            custom_structure_prompt = st.text_area(
-                "Prompt pour l'analyse de structure (modifiable)",
-                value=structure_prompt,
-                height=200,
-                key="structure_prompt"
-            )
-            
-            if st.button("🚀 Analyser la structure Hn"):
-                with st.spinner("Analyse de la structure en cours..."):
-                    structure_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(custom_structure_prompt)
-                    st.session_state.structure_result = structure_result
-                    st.success("✅ Analyse de structure terminée")
-            
-            # Affichage du résultat structure
-            if 'structure_result' in st.session_state:
-                st.subheader("📊 Structure Hn optimisée")
-                st.markdown(st.session_state.structure_result)
-            
-            # Étape 3: Analyse du Title
-            st.header("🏷️ 3. Analyse du Title")
-            
-            # Génération du prompt pour le title
-            title_prompt = PromptTemplates.get_title_prompt(target_keyword, st.session_state.selected_competitors)
-            
-            custom_title_prompt = st.text_area(
-                "Prompt pour l'analyse du title (modifiable)",
-                value=title_prompt,
-                height=200,
-                key="title_prompt"
-            )
-            
-            if st.button("🚀 Analyser le Title"):
-                with st.spinner("Analyse du title en cours..."):
-                    title_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(custom_title_prompt)
-                    st.session_state.title_result = title_result
-                    st.success("✅ Analyse de title terminée")
-            
-            # Affichage du résultat title
-            if 'title_result' in st.session_state:
-                st.subheader("🏷️ Title optimisé")
-                st.markdown(st.session_state.title_result)
-            
-            # Étape 4: Analyse de la Meta Description
-            st.header("📝 4. Analyse de la Meta Description")
-            
-            # Génération du prompt pour la meta description
-            meta_prompt = PromptTemplates.get_meta_description_prompt(target_keyword, st.session_state.selected_competitors)
-            
-            custom_meta_prompt = st.text_area(
-                "Prompt pour l'analyse de la meta description (modifiable)",
-                value=meta_prompt,
-                height=200,
-                key="meta_prompt"
-            )
-            
-            if st.button("🚀 Analyser la Meta Description"):
-                with st.spinner("Analyse de la meta description en cours..."):
-                    meta_result = st.session_state.generator.ai_analyzer.analyze_with_custom_prompt(custom_meta_prompt)
-                    st.session_state.meta_result = meta_result
-                    st.success("✅ Analyse de meta description terminée")
-            
-            # Affichage du résultat meta description
-            if 'meta_result' in st.session_state:
-                st.subheader("📝 Meta Description optimisée")
-                st.markdown(st.session_state.meta_result)
-            
-            # Génération du brief final
-            if all(key in st.session_state for key in ['structure_result', 'title_result', 'meta_result']):
-                st.header("📄 5. Brief SEO Final")
-                
-                # Aperçu du brief
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("🏷️ Balises SEO")
-                    st.write("**Title:**")
-                    st.code(st.session_state.title_result)
-                    
-                    st.write("**Meta Description:**")
-                    st.code(st.session_state.meta_result)
-                
-                with col2:
-                    st.subheader("📊 Structure Hn")
-                    st.markdown(st.session_state.structure_result)
-                
-                if st.button("📄 Générer le document Word"):
-                    try:
-                        seo_brief = SEOBrief(
-                            target_keyword=target_keyword,
-                            optimized_title=st.session_state.title_result,
-                            optimized_meta_description=st.session_state.meta_result,
-                            headings_structure=st.session_state.structure_result,
-                            country=selected_country,
-                            language=selected_language,
-                            competitors_analyzed=[comp.url for comp in st.session_state.selected_competitors]
-                        )
-                        
-                        word_buffer = WordGenerator.create_seo_brief_document(seo_brief)
-                        
-                        st.download_button(
-                            label="📄 Télécharger le Brief SEO (.docx)",
-                            data=word_buffer,
-                            file_name=f"brief_seo_{target_keyword.replace(' ', '_')}_{selected_country.split(' ')[1].lower()}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                        
-                        st.success("✅ Document Word généré!")
-                        
-                    except Exception as e:
-                        st.error(f"❌ Erreur génération Word: {e}")
-        
-        elif not auto_mode:
-            st.warning("⚠️ Veuillez sélectionner au moins un concurrent pour continuer")
-    
-    # Affichage des résultats si mode automatique et analyses terminées
-    if auto_mode and all(key in st.session_state for key in ['structure_result', 'title_result', 'meta_result']):
-        st.header("📄 Brief SEO Généré Automatiquement")
-        
-        # Aperçu du brief
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🏷️ Balises SEO")
-            st.write("**Title:**")
-            st.code(st.session_state.title_result)
-            
-            st.write("**Meta Description:**")
-            st.code(st.session_state.meta_result)
-        
-        with col2:
-            st.subheader("📊 Structure Hn")
-            st.markdown(st.session_state.structure_result)
-    
-    # Bouton pour reset
-    if st.session_state.search_completed:
-        if st.button("🔄 Nouvelle recherche"):
-            # Reset de toutes les variables de session
-            for key in ['competitors_data', 'search_completed', 'selected_competitors', 'structure_result', 'title_result', 'meta_result']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Recommencer l'analyse"):
+        for key in list(st.session_state.keys()): del st.session_state[key]
+        st.cache_data.clear()
+        st.rerun()
 
 if __name__ == "__main__":
+    if not AHO_CORASICK_AVAILABLE: st.warning("**Performance limitée :** `pyahocorasick` non installé (`pip install pyahocorasick`)", icon="⚠️")
+    if not XLSX_EXPORT_AVAILABLE: st.sidebar.warning("Pour l'export Excel (.xlsx), installez `openpyxl`", icon="⚠️")
+    if not FUZZY_AVAILABLE: st.sidebar.warning("Pour l'analyse floue, installez `fuzzywuzzy` et `python-levenshtein`", icon="⚠️")
     main()
