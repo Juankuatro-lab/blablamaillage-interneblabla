@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Application Streamlit - Analyse des Opportunités de Maillage Interne
+Application Streamlit - Analyse des opportunités de Maillage Interne
 ===================================================================
 
 Interface graphique pour analyser les opportunités de maillage interne
 basées sur les données de la Google Search Console.
 
-Auteur: Assistant Claude
-Version: 18.3 - The Simple & Robust Final Version
-Date: 2025-07-14
+Auteur: JC avec Claude AI
+Version: 18.4 - Version finale sans émojis avec documentation complète
+Date: 2025-11-04
 
-## AMÉLIORATION: Changelog v18.3
-- **LOGIQUE SIMPLIFIÉE:** Retour à une seule analyse pilotée par la checkbox "Analyse Floue".
-  - Si décochée : analyse exacte rapide.
-  - Si cochée : analyse exacte + floue combinées.
-- **FEEDBACK FIABLE:** Une seule barre de progression pour un suivi clair et constant.
-- **STABILITÉ FINALE:** Cette version est la plus stable et directe, combinant toutes les
-  fonctionnalités (Source de l'Ancre, Fuzzy, etc.) et les optimisations de performance.
+## AMÉLIORATION: Changelog v18.4
+- **INTERFACE ÉPURÉE:** Suppression de tous les émojis pour une interface professionnelle.
+- **DOCUMENTATION INTÉGRÉE:** Ajout d'une box d'informations complète avec méthodologie détaillée.
+- **GUIDE SCREAMING FROG:** Instructions précises pour l'extraction HTML (mode "Stocker le HTML").
+- **STABILITÉ:** Analyse combinée exacte + floue, barre de progression fiable, optimisations de performance.
 """
 
 import streamlit as st
@@ -49,7 +47,7 @@ except ImportError:
     FUZZY_AVAILABLE = False
 
 st.set_page_config(
-    page_title="🔗 Maillage Interne SEO", page_icon="🔗",
+    page_title="Maillage Interne SEO", page_icon="🔗",
     layout="wide", initial_sidebar_state="expanded"
 )
 
@@ -225,7 +223,7 @@ class InternalLinkingAnalyzer:
             
             feedback_placeholder.empty()
             if len(urls_to_process) > 0:
-                st.info(f"🔗 **Matching réussi :** {mapped_count} sur {len(urls_to_process)} URLs GSC analysées ont été trouvées dans le fichier ZIP ({mapped_count/len(urls_to_process):.1%}).")
+                st.info(f"Matching réussi : {mapped_count} sur {len(urls_to_process)} URLs GSC analysées ont été trouvées dans le fichier ZIP ({mapped_count/len(urls_to_process):.1%}).")
 
         opportunities = [dict(t) for t in {tuple(d.items()) for d in opportunities}]
         opportunities.sort(key=lambda x: x['priority'], reverse=True)
@@ -240,7 +238,7 @@ class InternalLinkingAnalyzer:
         anchor_location = self._find_anchor_location(element, anchor_text)
         element_tag, classes = element.name, element.get('class', [])
         class_str = f".{'.'.join(classes)}" if classes else ""
-        return {'source_url': source_url, 'target_url': target_page_url, 'anchor': anchor_text, 'priority': target_data['priority'], 'clicks': target_data['clicks'], 'match_type': match_type, 'element_source': f"<{element_tag}{class_str}>", 'existing_link': "❌ Lien présent" if link_exists else "✅ Nouvelle opportunité", 'anchor_location': anchor_location}
+        return {'source_url': source_url, 'target_url': target_page_url, 'anchor': anchor_text, 'priority': target_data['priority'], 'clicks': target_data['clicks'], 'match_type': match_type, 'element_source': f"<{element_tag}{class_str}>", 'existing_link': "[X] Lien présent" if link_exists else "[OK] Nouvelle opportunité", 'anchor_location': anchor_location}
 
 # --- FONCTIONS DE LIAISON (pour le cache Streamlit) ---
 @st.cache_data
@@ -252,8 +250,121 @@ def load_gsc_data_cached(uploaded_file, config):
 
 # --- INTERFACE STREAMLIT ---
 def main():
-    st.title("🔗 Analyseur de Maillage Interne SEO")
+    st.title("Analyseur de Maillage Interne SEO")
     st.markdown("**Stratégie 'Canonical First' : la solution la plus robuste pour une analyse fiable.**")
+    
+    # Box d'informations
+    with st.expander("ℹ️ Comment utiliser cet outil ? (Cliquez pour dérouler)", expanded=False):
+        st.markdown("""
+        ### Principe de fonctionnement
+        
+        Cet outil analyse vos pages web pour identifier des **opportunités de maillage interne** en croisant :
+        - Les **mots-clés performants** de votre Google Search Console (GSC)
+        - Le **contenu textuel** de vos pages HTML
+        
+        ### Méthodologie
+        
+        1. **Correspondance Canonical First** : L'outil utilise les balises canonical de vos pages HTML pour garantir un matching précis avec les URLs de la GSC
+        2. **Détection intelligente** : Il cherche dans le contenu de vos pages les mots-clés qui génèrent du trafic sur d'autres pages
+        3. **Analyse des opportunités** : Quand un mot-clé est trouvé, l'outil vérifie si un lien existe déjà vers la page cible
+        
+        ### Étapes d'utilisation
+        
+        **Étape 1 : Préparez vos données GSC**
+        - Exportez vos données depuis Google Search Console (Pages + Requêtes)
+        - Format accepté : Excel (.xlsx, .xls) ou CSV
+        - Colonnes requises : `Page`, `Query` (ou Requête), `Clicks` (ou Clics)
+        - Colonne optionnelle : `Position` (ou Position Moyenne)
+        
+        **Étape 2 : Créez votre archive HTML**
+        
+        **Méthode recommandée : Screaming Frog SEO Spider**
+        
+        1. **Configuration du crawl** :
+           - Ouvrez Screaming Frog et entrez l'URL de votre site
+           - Allez dans `Configuration > Spider > Rendu`
+           - **Important** : Sélectionnez **"Stocker le HTML"** (et non "Rendu JavaScript")
+           
+        2. **Pourquoi "Stocker le HTML" ?**
+           - Si votre site est bien structuré avec du contenu HTML natif (pas uniquement généré en JS)
+           - Cette méthode est **beaucoup plus rapide** et consomme moins de ressources
+           - Le HTML brut contient déjà le contenu textuel nécessaire pour l'analyse
+           - Les balises canonical sont présentes dans le HTML source
+           
+        3. **Quand utiliser le rendu JavaScript ?**
+           - Uniquement si votre site est une SPA (Single Page Application) type React/Vue/Angular
+           - Si le contenu textuel n'apparaît qu'après exécution du JavaScript
+           - Note : Le rendu JS ralentit considérablement le crawl (jusqu'à 10x plus lent)
+           
+        4. **Lancez le crawl** :
+           - Cliquez sur "Démarrer" et attendez la fin du crawl
+           - Vérifiez que toutes vos pages importantes ont été crawlées
+           
+        5. **Export du HTML** :
+           - Allez dans `Export > HTML/Bulk Export > HTML`
+           - Screaming Frog crée automatiquement un dossier avec tous les fichiers HTML
+           
+        6. **Créez le fichier ZIP** :
+           - Compressez l'intégralité du dossier HTML exporté dans un fichier ZIP
+           - Important : Les pages doivent contenir les balises `<link rel="canonical">`
+        
+        **Alternative : Autres crawlers**
+        - **Sitebulb** : Export HTML disponible dans les rapports
+        - **OnCrawl** : Export HTML via l'API ou l'interface
+        - **Crawl manuel** : wget ou curl avec compression ZIP des résultats
+        
+        **Étape 3 : Configurez l'analyse (Sidebar)**
+        - **Filtres de données** : Définissez des seuils (clics minimum, position max, etc.)
+        - **Exclusions** : Filtrez les stop-words et pages classiques (contact, CGU, etc.)
+        - **Analyse floue** : Activez pour détecter aussi les variations de mots-clés (pluriels, etc.)
+        - **Ciblage du contenu** : Sélectionnez les balises HTML à analyser (p, li, span, etc.)
+        
+        **Étape 4 : Uploadez vos fichiers**
+        - Uploadez d'abord votre fichier GSC (colonne de gauche)
+        - Puis uploadez votre fichier ZIP HTML (colonne de droite)
+        
+        **Étape 5 : Lancez l'analyse**
+        - Cliquez sur "Lancer l'Analyse Complète"
+        - L'outil va traiter vos données (cela peut prendre quelques minutes selon la taille)
+        
+        **Étape 6 : Exploitez les résultats**
+        - Consultez le tableau des opportunités détectées
+        - Exportez les résultats en CSV ou Excel
+        - Priorisez vos actions selon la colonne "Priorité" (basée sur clics × position)
+        
+        ### Interprétation des résultats
+        
+        - **[OK] Nouvelle opportunité** : Aucun lien n'existe, c'est une vraie opportunité de maillage
+        - **[X] Lien présent** : Un lien existe déjà, pas d'action nécessaire
+        - **Type de Match** : 
+          - `exact` : correspondance exacte du mot-clé
+          - `fuzzy (X%)` : correspondance approximative (variante détectée)
+        - **Source Ancre** : Indique où se trouve le texte d'ancre potentiel (texte principal, alt d'image, etc.)
+        - **Priorité** : Score calculé selon les clics et la position du mot-clé dans la GSC
+        
+        ### Conseils d'optimisation
+        
+        - Commencez par analyser les **nouvelles opportunités** avec la plus haute priorité
+        - Vérifiez la pertinence contextuelle avant d'ajouter un lien
+        - Utilisez le texte d'ancre suggéré ou adaptez-le selon le contexte
+        - Privilégiez les liens dans le contenu principal (balises `<p>`) plutôt que dans les sidebars
+        
+        ### Questions fréquentes
+        
+        **Pourquoi certaines URLs GSC ne sont pas trouvées ?**
+        - Les URLs doivent correspondre exactement via leur balise canonical
+        - Vérifiez que votre crawl HTML est complet
+        - Les pages dynamiques ou protégées peuvent ne pas être crawlées
+        
+        **L'analyse est lente, comment l'accélérer ?**
+        - Réduisez la "Limite de pages à analyser" dans la configuration
+        - Installez `pyahocorasick` pour de meilleures performances
+        - Désactivez l'analyse floue si vous n'en avez pas besoin
+        
+        **Que faire si je n'ai pas de balises canonical ?**
+        - Cet outil nécessite des balises canonical pour fonctionner de manière fiable
+        - Ajoutez-les à vos pages avant de lancer l'analyse
+        """)
     
     if 'config' not in st.session_state:
         st.session_state.config = {
@@ -267,18 +378,18 @@ def main():
     if 'results' not in st.session_state: st.session_state.results = None
     if 'detected_classes_list' not in st.session_state: st.session_state.detected_classes_list = []
     
-    st.sidebar.header("⚙️ Configuration")
+    st.sidebar.header("Configuration")
     cfg = st.session_state.config
-    st.sidebar.subheader("🎯 Filtres de Données")
+    st.sidebar.subheader("Filtres de Données")
     cfg['min_clicks'] = st.sidebar.number_input("Minimum de clics", 0, 1000, cfg.get('min_clicks', 0), help="Ignorer les mots-clés qui ont généré moins de clics que ce seuil.")
     cfg['min_keyword_length'] = st.sidebar.number_input("Longueur min. mots-clés", 1, 20, cfg.get('min_keyword_length', 3), help="Ignorer les mots-clés plus courts que ce nombre de caractères.")
     cfg['max_position'] = st.sidebar.number_input("Position max. SERPs", 0, 100, cfg.get('max_position', 50), help="Ignorer les mots-clés dont la position moyenne est au-delà de ce seuil (0 = pas de limite).")
-    st.sidebar.subheader("⚡️ Optimisation")
+    st.sidebar.subheader("Optimisation")
     cfg['max_pages_to_analyze'] = st.sidebar.number_input("Limite de pages à analyser (GSC)", 100, 500000, cfg.get('max_pages_to_analyze', 10000), help="Limite le nombre d'URLs GSC uniques à analyser pour accélérer le traitement sur de très gros sites.")
-    st.sidebar.subheader("🚫 Exclusions")
+    st.sidebar.subheader("Exclusions")
     cfg['exclude_stopwords'] = st.sidebar.checkbox("Exclure les stop words", cfg.get('exclude_stopwords', True), help="Exclut les mots vides courants (le, la, de, etc.) de l'analyse.")
     cfg['exclude_classic_pages'] = st.sidebar.checkbox("Exclure pages classiques", cfg.get('exclude_classic_pages', True), help="Exclut les pages comme 'contact', 'mentions légales', 'CGU', etc.")
-    st.sidebar.subheader("🔍 Analyse Floue")
+    st.sidebar.subheader("Analyse Floue")
     if FUZZY_AVAILABLE:
         cfg['use_fuzzy_matching'] = st.sidebar.checkbox("Activer l'analyse floue", cfg.get('use_fuzzy_matching', False), help="En plus de la recherche exacte, cherche des variations de mots-clés (pluriels, synonymes...). Rend l'analyse plus lente.")
         if cfg['use_fuzzy_matching']:
@@ -286,9 +397,9 @@ def main():
     else:
         st.sidebar.warning("Pour l'analyse floue, installez `fuzzywuzzy` et `python-levenshtein`.", icon="⚠️")
         cfg['use_fuzzy_matching'] = False
-    st.sidebar.subheader("🎯 Ciblage du Contenu")
-    cfg['manual_keyword_selection'] = st.sidebar.checkbox("🎯 Sélection manuelle des mots-clés", cfg.get('manual_keyword_selection', False), help="Permet de choisir manuellement les mots-clés à analyser au lieu de tous les prendre.")
-    cfg['auto_detect_classes'] = st.sidebar.checkbox("🤖 Détection auto des classes CSS", cfg.get('auto_detect_classes', True), help="Analyse le HTML pour trouver les classes CSS contenant le plus de texte.")
+    st.sidebar.subheader("Ciblage du Contenu")
+    cfg['manual_keyword_selection'] = st.sidebar.checkbox("Sélection manuelle des mots-clés", cfg.get('manual_keyword_selection', False), help="Permet de choisir manuellement les mots-clés à analyser au lieu de tous les prendre.")
+    cfg['auto_detect_classes'] = st.sidebar.checkbox("Détection auto des classes CSS", cfg.get('auto_detect_classes', True), help="Analyse le HTML pour trouver les classes CSS contenant le plus de texte.")
     cfg['content_selectors'] = st.sidebar.multiselect("Sélecteurs de contenu", ['p', 'li', 'span', 'div', 'h1', 'h2', 'h3'], cfg.get('content_selectors', ['p', 'li', 'span']), help="Balises HTML dans lesquelles chercher les opportunités.")
     if st.session_state.detected_classes_list:
         selected_class = st.sidebar.selectbox("Utiliser une classe CSS détectée ?", options=[''] + st.session_state.detected_classes_list, help="Cible l'analyse sur une classe CSS spécifique trouvée lors de la détection automatique.")
@@ -298,13 +409,13 @@ def main():
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("📊 Données Google Search Console")
+        st.subheader("Données Google Search Console")
         excel_file = st.file_uploader("Uploadez votre fichier Excel/CSV", type=['xlsx', 'xls', 'csv'])
         if excel_file:
             st.session_state.gsc_data = load_gsc_data_cached(excel_file, cfg)
             if st.session_state.gsc_data is not None: st.success(f"Données GSC chargées: {len(st.session_state.gsc_data)} lignes.")
     with col2:
-        st.subheader("📁 Fichiers HTML")
+        st.subheader("Fichiers HTML")
         if st.session_state.gsc_data is not None:
             zip_file = st.file_uploader("Uploadez le fichier ZIP HTML", type=['zip'])
             if zip_file:
@@ -315,47 +426,47 @@ def main():
                         analyzer = InternalLinkingAnalyzer(cfg)
                         st.session_state.detected_classes_list = [cls for cls, _ in analyzer.detect_content_classes(st.session_state.zip_content)]
                         if st.session_state.detected_classes_list: st.rerun()
-        else: st.info("📊 Veuillez d'abord charger les données Excel.")
+        else: st.info("Veuillez d'abord charger les données Excel.")
 
     selected_keywords = None
     if st.session_state.gsc_data is not None and cfg['manual_keyword_selection']:
-        st.subheader("🎯 Sélection des Mots-clés à Analyser")
+        st.subheader("Sélection des Mots-clés à Analyser")
         available_keywords = sorted(st.session_state.gsc_data['query'].unique().tolist())
         selected_keywords = st.multiselect("Sélectionnez les mots-clés:", options=available_keywords)
     
     if st.session_state.gsc_data is not None and st.session_state.zip_content is not None:
         can_analyze = not cfg['manual_keyword_selection'] or (cfg['manual_keyword_selection'] and selected_keywords is not None)
         if can_analyze:
-            if st.button("🚀 Lancer l'Analyse Complète", type="primary", use_container_width=True):
+            if st.button("Lancer l'Analyse Complète", type="primary", use_container_width=True):
                 analyzer = InternalLinkingAnalyzer(cfg)
                 analyzer.excel_data = st.session_state.gsc_data
                 st.session_state.results = analyzer.analyze_opportunities(st.session_state.zip_content, selected_keywords)
         elif cfg['manual_keyword_selection']:
-            st.warning("⚠️ Veuillez sélectionner au moins un mot-clé pour lancer l'analyse.")
+            st.warning("Veuillez sélectionner au moins un mot-clé pour lancer l'analyse.")
 
     if st.session_state.results is not None:
         if st.session_state.results:
             df_display = pd.DataFrame(st.session_state.results).rename(columns={'source_url': 'URL Source', 'target_url': 'Page à Mailler', 'anchor': 'Ancre de Lien', 'element_source': 'Élément Source', 'existing_link': 'Lien Existant', 'priority': 'Priorité', 'match_type': 'Type de Match', 'anchor_location': 'Source Ancre'})
-            st.header("📋 Résultats de l'Analyse")
+            st.header("Résultats de l'Analyse")
             st.dataframe(df_display[['URL Source', 'Ancre de Lien', 'Source Ancre', 'Page à Mailler', 'Élément Source', 'Type de Match', 'Lien Existant', 'Priorité']], use_container_width=True, column_config={"URL Source": st.column_config.LinkColumn(), "Page à Mailler": st.column_config.LinkColumn()})
-            st.subheader("📥 Export des Résultats")
+            st.subheader("Export des Résultats")
             col_export1, col_export2 = st.columns(2)
             with col_export1:
-                st.download_button("📥 Télécharger CSV", df_display.to_csv(index=False, encoding='utf-8-sig'), "opportunites_maillage.csv", "text/csv", use_container_width=True)
+                st.download_button("Télécharger CSV", df_display.to_csv(index=False, encoding='utf-8-sig'), "opportunites_maillage.csv", "text/csv", use_container_width=True)
             with col_export2:
                 if XLSX_EXPORT_AVAILABLE:
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer: df_display.to_excel(writer, index=False, sheet_name='Opportunités')
-                    st.download_button("📄 Télécharger Excel (.xlsx)", output.getvalue(), "opportunites_maillage.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button("Télécharger Excel (.xlsx)", output.getvalue(), "opportunites_maillage.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                 else: st.warning("Pour l'export Excel, installez `openpyxl`", icon="⚠️")
             st.divider()
-            st.header("📈 Tableau de Bord de l'Analyse")
-            total_ops, new_ops = len(df_display), len(df_display[df_display['Lien Existant'] == '✅ Nouvelle opportunité'])
+            st.header("Tableau de Bord de l'Analyse")
+            total_ops, new_ops = len(df_display), len(df_display[df_display['Lien Existant'] == '[OK] Nouvelle opportunité'])
             col_metric1, col_metric2, col_metric3 = st.columns(3)
             col_metric1.metric("Opportunités Totales", total_ops)
             if total_ops > 0:
-                col_metric2.metric("Nouvelles Opportunités ✅", new_ops, f"{new_ops/total_ops:.1%}")
-                col_metric3.metric("Liens Déjà Présents ❌", total_ops - new_ops, f"{(total_ops - new_ops)/total_ops:.1%}")
+                col_metric2.metric("Nouvelles Opportunités [OK]", new_ops, f"{new_ops/total_ops:.1%}")
+                col_metric3.metric("Liens Déjà Présents [X]", total_ops - new_ops, f"{(total_ops - new_ops)/total_ops:.1%}")
             col_graph1, col_graph2 = st.columns(2)
             with col_graph1:
                 st.write("**Top 10 Pages Sources d'Opportunités**"); st.bar_chart(df_display['URL Source'].value_counts().head(10))
@@ -364,16 +475,16 @@ def main():
                 st.write("**Top 10 Pages Cibles (à mailler)**"); st.bar_chart(df_display['Page à Mailler'].value_counts().head(10))
                 st.write("**Distribution par Source de l'Ancre**"); st.bar_chart(df_display['Source Ancre'].value_counts())
         else:
-            st.warning("⚠️ Aucune opportunité trouvée avec la configuration actuelle.")
+            st.warning("Aucune opportunité trouvée avec la configuration actuelle.")
             
     st.sidebar.divider()
-    if st.sidebar.button("🔄 Recommencer l'analyse"):
+    if st.sidebar.button("Recommencer l'analyse"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.cache_data.clear()
         st.rerun()
 
 if __name__ == "__main__":
-    if not AHO_CORASICK_AVAILABLE: st.warning("**Performance limitée :** `pyahocorasick` non installé (`pip install pyahocorasick`)", icon="⚠️")
+    if not AHO_CORASICK_AVAILABLE: st.warning("**Performance limitée :** `pyahocorasick` non installé (`pip install pyahocorasack`)", icon="⚠️")
     if not XLSX_EXPORT_AVAILABLE: st.sidebar.warning("Pour l'export Excel (.xlsx), installez `openpyxl`", icon="⚠️")
     if not FUZZY_AVAILABLE: st.sidebar.warning("Pour l'analyse floue, installez `fuzzywuzzy` et `python-levenshtein`", icon="⚠️")
     main()
