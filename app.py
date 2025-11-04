@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Application Streamlit - Analyse des opportunités de Maillage Interne
+Application Streamlit - Analyse des Opportunités de Maillage Interne
 ===================================================================
 
 Interface graphique pour analyser les opportunités de maillage interne
@@ -250,8 +250,9 @@ def load_gsc_data_cached(uploaded_file, config):
 
 # --- INTERFACE STREAMLIT ---
 def main():
-    st.title("Maillage Interne SEO")
-    st.markdown("**Stratégie 'Canonical First'** : analyse fiable.")
+    st.title("Analyseur de Maillage Interne SEO")
+    st.markdown("**Stratégie 'Canonical First' : la solution la plus robuste pour une analyse fiable.**")
+    st.markdown("*Développé par [JC](https://jc-espinosa.com/) et Claude :)*")
     
     # Box d'informations
     with st.expander("ℹ️ Comment utiliser cet outil ? (Cliquez pour dérouler)", expanded=False):
