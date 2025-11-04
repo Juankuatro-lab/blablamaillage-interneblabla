@@ -252,7 +252,6 @@ def load_gsc_data_cached(uploaded_file, config):
 def main():
     st.title("Analyseur de Maillage Interne SEO")
     st.markdown("**Stratégie 'Canonical First' : la solution la plus robuste pour une analyse fiable.**")
-    st.markdown("*Développé par [JC](https://jc-espinosa.com/) et Claude :)*")
     
     # Box d'informations
     with st.expander("ℹ️ Comment utiliser cet outil ? (Cliquez pour dérouler)", expanded=False):
@@ -483,6 +482,15 @@ def main():
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.cache_data.clear()
         st.rerun()
+    
+    # Footer
+    st.divider()
+    st.markdown(
+        "<div style='text-align: center; color: #666; padding: 20px;'>"
+        "Développé par <a href='https://jc-espinosa.com/' target='_blank' style='color: #0066cc; text-decoration: none;'>JC</a> et Claude :)"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     if not AHO_CORASICK_AVAILABLE: st.warning("**Performance limitée :** `pyahocorasick` non installé (`pip install pyahocorasack`)", icon="⚠️")
