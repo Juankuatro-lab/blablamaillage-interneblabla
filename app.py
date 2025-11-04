@@ -251,7 +251,7 @@ def load_gsc_data_cached(uploaded_file, config):
 # --- INTERFACE STREAMLIT ---
 def main():
     st.title("Maillage Interne SEO")
-    st.markdown("**Stratégie 'Canonical First' : la solution la plus robuste pour une analyse fiable.**")
+    st.markdown("**Stratégie 'Canonical First'** : analyse fiable.")
     
     # Box d'informations
     with st.expander("ℹ️ Comment utiliser cet outil ? (Cliquez pour dérouler)", expanded=False):
